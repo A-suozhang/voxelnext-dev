@@ -3,6 +3,8 @@ import argparse
 import datetime
 import glob
 import os
+import shutil
+import warnings
 from pathlib import Path
 from test import repeat_eval_ckpt
 
@@ -13,9 +15,12 @@ from tensorboardX import SummaryWriter
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
 from pcdet.datasets import build_dataloader
 from pcdet.models import build_network, model_fn_decorator
+# from pcdet.models.backbones_2d.masked_bn import MaskedSyncBatchNormV2
+
 from pcdet.utils import common_utils
 from train_utils.optimization import build_optimizer, build_scheduler
 from train_utils.train_utils import train_model
+from test import eval_single_ckpt
 
 
 def parse_config():
@@ -24,7 +29,7 @@ def parse_config():
 
     parser.add_argument('--batch_size', type=int, default=None, required=False, help='batch size for training')
     parser.add_argument('--epochs', type=int, default=None, required=False, help='number of epochs to train for')
-    parser.add_argument('--workers', type=int, default=4, help='number of workers for dataloader')
+    parser.add_argument('--workers', type=int, default=0, help='number of workers for dataloader')
     parser.add_argument('--extra_tag', type=str, default='default', help='extra tag for this experiment')
     parser.add_argument('--ckpt', type=str, default=None, help='checkpoint to start from')
     parser.add_argument('--pretrained_model', type=str, default=None, help='pretrained_model')
@@ -32,7 +37,7 @@ def parse_config():
     parser.add_argument('--tcp_port', type=int, default=18888, help='tcp port for distrbuted training')
     parser.add_argument('--sync_bn', action='store_true', default=False, help='whether to use sync bn')
     parser.add_argument('--fix_random_seed', action='store_true', default=False, help='')
-    parser.add_argument('--ckpt_save_interval', type=int, default=1, help='number of training epochs')
+    parser.add_argument('--ckpt_save_interval', type=int, default=5, help='number of training epochs')
     parser.add_argument('--local_rank', type=int, default=0, help='local rank for distributed training')
     parser.add_argument('--max_ckpt_save_num', type=int, default=30, help='max number of saved checkpoint')
     parser.add_argument('--merge_all_iters_to_one_epoch', action='store_true', default=False, help='')
@@ -47,9 +52,8 @@ def parse_config():
     parser.add_argument('--use_tqdm_to_record', action='store_true', default=False, help='if True, the intermediate losses will not be logged to file, only tqdm will be used')
     parser.add_argument('--logger_iter_interval', type=int, default=50, help='')
     parser.add_argument('--ckpt_save_time_interval', type=int, default=300, help='in terms of seconds')
-    parser.add_argument('--wo_gpu_stat', action='store_true', help='')
+    parser.add_argument('--wo_gpu_stat', type=bool, default=True, help='whether show gpu-stat')
     parser.add_argument('--use_amp', action='store_true', help='use mix precision training')
-    
 
     args = parser.parse_args()
 
@@ -111,7 +115,23 @@ def main():
     if cfg.LOCAL_RANK == 0:
         os.system('cp %s %s' % (args.cfg_file, output_dir))
 
-    tb_log = SummaryWriter(log_dir=str(output_dir / 'tensorboard')) if cfg.LOCAL_RANK == 0 else None
+        # bakup the current pcdet files
+        # in dist_train, only save on rank 0
+        if os.path.exists(os.path.join(output_dir, 'tools')):
+            shutil.rmtree(os.path.join(output_dir, 'tools'))
+        shutil.copytree('../tools', os.path.join(output_dir,'tools'), ignore=shutil.ignore_patterns('scripts','visualization','*.pth'))
+
+        if os.path.exists(os.path.join(output_dir, 'pcdet')):
+            # exclude the ops(54M)
+            shutil.rmtree(os.path.join(output_dir, './pcdet'))
+
+        shutil.copytree('../pcdet/datasets', os.path.join(output_dir,'./pcdet/datasets'))
+        shutil.copytree('../pcdet/models', os.path.join(output_dir,'./pcdet/models'))
+        shutil.copy('../pcdet/models/backbones_3d/spconv_backbone.py', os.path.join(output_dir,'./'))
+        shutil.copytree('../pcdet/utils', os.path.join(output_dir,'./pcdet/utils'))
+
+    # tb_log = SummaryWriter(log_dir=str(output_dir / 'tensorboard')) if cfg.LOCAL_RANK == 0 else None
+    tb_log = None
 
     logger.info("----------- Create dataloader & network & optimizer -----------")
     train_set, train_loader, train_sampler = build_dataloader(
@@ -126,40 +146,94 @@ def main():
         seed=666 if args.fix_random_seed else None
     )
 
+    # initialize test_loader for intermediate_eval
+    test_set, test_loader, sampler = build_dataloader(
+        dataset_cfg=cfg.DATA_CONFIG,
+        class_names=cfg.CLASS_NAMES,
+        batch_size=args.batch_size,
+        dist=dist_train, workers=args.workers, logger=logger, training=False
+    )
+
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=train_set)
-    if args.sync_bn:
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    # if args.sync_bn:
+        # # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        # model = MaskedSyncBatchNormV2.convert_sync_batchnorm(model)
     model.cuda()
 
-    optimizer = build_optimizer(model, cfg.OPTIMIZATION)
+    optimizer = build_optimizer(model, cfg.OPTIMIZATION, for_predictor=False)
 
+    predictor_args = {}
+    # INFO: initialize optimizer and scheduler for predictor
+    if hasattr(cfg.MODEL,'PREDICTOR'):
+        assert hasattr(cfg.OPTIMIZATION,'PREDICTOR')
+        # TODO: define predictor trainings
+        # INFO: keep the batch_size and epoch the same of normal/predictor training, sharing the same train_loader
+        cfg.OPTIMIZATION.PREDICTOR.BATCH_SIZE_PER_GPU = cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU
+        cfg.OPTIMIZATION.PREDICTOR.NUM_EPOCHS = cfg.OPTIMIZATION.NUM_EPOCHS*cfg.OPTIMIZATION.PREDICTOR.TRAIN_PREDICTOR_EPOCH//cfg.OPTIMIZATION.PREDICTOR.TRAIN_PREDICTOR_EVERY
+        predictor_optimizer = build_optimizer(model, cfg.OPTIMIZATION.PREDICTOR, for_predictor=True)
+        predictor_args['optimizer'] = predictor_optimizer
+
+    if args.pretrained_model:
+        if args.ckpt:
+            raise AssertionError("pretrained_model and ckpt should not be used together")
     # load checkpoint if it is possible
     start_epoch = it = 0
     last_epoch = -1
     if args.pretrained_model is not None:
-        model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
+        # model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
 
-    if args.ckpt is not None:
-        it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
-        last_epoch = start_epoch + 1
+        # CFG: eval the loaded ckpt first
+        # EVAL_CKPT_BEFORE_LOADING = True
+        # if EVAL_CKPT_BEFORE_LOADING:
+            # logger.info('eval the loaded ckpt from: {}'.format(args.pretrained_model))
+            # with torch.no_grad():
+                # model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=dist_test, pre_trained_path=args.pretrained_model)
+                # model.cuda()
+                # # start evaluation
+                # eval_utils.eval_one_epoch(
+                    # cfg, args, model, test_loader, epoch_id, logger, dist_test=dist_test,
+                    # result_dir=eval_output_dir
+                # )
+
+        strict = cfg.OPTIMIZATION.get('PREDICTOR',None) is None
+        model.load_params_with_optimizer(args.pretrained_model, to_cpu=dist_train, optimizer=optimizer, logger=logger, strict=strict)
     else:
-        ckpt_list = glob.glob(str(ckpt_dir / '*.pth'))
-              
-        if len(ckpt_list) > 0:
-            ckpt_list.sort(key=os.path.getmtime)
-            while len(ckpt_list) > 0:
-                try:
-                    it, start_epoch = model.load_params_with_optimizer(
-                        ckpt_list[-1], to_cpu=dist_train, optimizer=optimizer, logger=logger
-                    )
-                    last_epoch = start_epoch + 1
-                    break
-                except:
-                    ckpt_list = ckpt_list[:-1]
+        if args.ckpt is not None:
+            # if predictor, donot force strict loading
+            strict = cfg.OPTIMIZATION.get('PREDICTOR',None) is None
+            it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger, strict=strict)
+            last_epoch = start_epoch + 1
+            args.epochs = last_epoch + args.epochs  # continue from exitisng ckpt
+
+            # CFG: eval the loaded ckpt first
+            EVAL_CKPT_BEFORE_LOADING = True
+            if EVAL_CKPT_BEFORE_LOADING:
+                logger.info('eval the loaded ckpt from: {}'.format(args.ckpt))
+                with torch.no_grad():
+                    eval_single_ckpt(model, test_loader, args, output_dir, logger, last_epoch, dist_test=dist_train)
+        else:
+            # automatically resume from existing ckpt
+            ckpt_list = glob.glob(str(ckpt_dir / 'checkpoint*.pth'))
+            if len(ckpt_list) > 0:
+                ckpt_list.sort(key=os.path.getmtime)
+                while len(ckpt_list) > 0:
+                    try:
+                        it, start_epoch = model.load_params_with_optimizer(
+                            ckpt_list[-1], to_cpu=dist_train, optimizer=optimizer, logger=logger
+                        )
+                        last_epoch = start_epoch + 1
+                        break
+                    except:
+                        ckpt_list = ckpt_list[:-1]
+                    if len(ckpt_list)>0: # when changed cfg and unmatched ckpt, there may be no ckpt available
+                        logger.info("------ automatically resume from existing ckpt {} of Epoch {}".format(ckpt_list[-1], start_epoch))
+                    else:
+                        logger.info("------ no available ckpt found, skip resuming")
 
     model.train()  # before wrap to DistributedDataParallel to support fixed some parameters
     if dist_train:
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()])
+        # model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()],find_unused_parameters=True)   # for predictor and weight training, should make find_unused_parameter=True
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()],find_unused_parameters=False)   # no_predictor, base training
     logger.info(f'----------- Model {cfg.MODEL.NAME} created, param count: {sum([m.numel() for m in model.parameters()])} -----------')
     logger.info(model)
 
@@ -167,6 +241,15 @@ def main():
         optimizer, total_iters_each_epoch=len(train_loader), total_epochs=args.epochs,
         last_epoch=last_epoch, optim_cfg=cfg.OPTIMIZATION
     )
+
+    if hasattr(cfg.MODEL,'PREDICTOR'):
+        assert hasattr(cfg.OPTIMIZATION,'PREDICTOR')
+        predictor_lr_scheduler, predictor_lr_warmup_scheduler = build_scheduler(
+                    predictor_optimizer, total_iters_each_epoch=len(train_loader), total_epochs=cfg.OPTIMIZATION.PREDICTOR.NUM_EPOCHS,
+                    last_epoch=last_epoch, optim_cfg=cfg.OPTIMIZATION.PREDICTOR
+                    )
+        predictor_args['lr_scheduler'] = predictor_lr_scheduler
+        predictor_args['lr_warmup_scheduler'] = predictor_lr_warmup_scheduler
 
     # -----------------------start training---------------------------
     logger.info('**********************Start training %s/%s(%s)**********************'
@@ -193,9 +276,15 @@ def main():
         logger=logger, 
         logger_iter_interval=args.logger_iter_interval,
         ckpt_save_time_interval=args.ckpt_save_time_interval,
-        use_logger_to_record=not args.use_tqdm_to_record, 
+        use_logger_to_record=not args.use_tqdm_to_record,
         show_gpu_stat=not args.wo_gpu_stat,
-        use_amp=args.use_amp
+        use_amp=args.use_amp,
+        # NEW: added other train model input args to support eval and predictor-training
+        args=args,
+        cfg=cfg,
+        test_loader=test_loader,
+        last_epoch=last_epoch,
+        predictor_args=predictor_args,
     )
 
     if hasattr(train_set, 'use_shared_memory') and train_set.use_shared_memory:
@@ -226,4 +315,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+	# ignore warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        main()

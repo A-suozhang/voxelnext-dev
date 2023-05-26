@@ -347,10 +347,13 @@ class Detector3DTemplate(nn.Module):
                     if val_implicit.shape == state_dict[key].shape:
                         val = val_implicit.contiguous()
 
-            if key in state_dict and state_dict[key].shape == val.shape:
-                update_model_state[key] = val
+            if key in state_dict:
+                if state_dict[key].shape == val.shape:
+                    update_model_state[key] = val
+                else:
+                    print('Unmatched weight {} {}'.format(state_dict[key].shape, val.shape))
+                    raise AssertionError
                 # logger.info('Update weight %s: %s' % (key, str(val.shape)))
-
         if strict:
             self.load_state_dict(update_model_state)
         else:
@@ -370,20 +373,19 @@ class Detector3DTemplate(nn.Module):
             pretrain_checkpoint = torch.load(pre_trained_path, map_location=loc_type)
             pretrain_model_state_disk = pretrain_checkpoint['model_state']
             model_state_disk.update(pretrain_model_state_disk)
-            
+
         version = checkpoint.get("version", None)
         if version is not None:
             logger.info('==> Checkpoint trained from version: %s' % version)
 
         state_dict, update_model_state = self._load_state_dict(model_state_disk, strict=False)
-
         for key in state_dict:
             if key not in update_model_state:
                 logger.info('Not updated weight %s: %s' % (key, str(state_dict[key].shape)))
 
         logger.info('==> Done (loaded %d/%d)' % (len(update_model_state), len(state_dict)))
 
-    def load_params_with_optimizer(self, filename, to_cpu=False, optimizer=None, logger=None):
+    def load_params_with_optimizer(self, filename, to_cpu=False, optimizer=None, logger=None, strict=True):
         if not os.path.isfile(filename):
             raise FileNotFoundError
 
@@ -393,13 +395,22 @@ class Detector3DTemplate(nn.Module):
         epoch = checkpoint.get('epoch', -1)
         it = checkpoint.get('it', 0.0)
 
-        self._load_state_dict(checkpoint['model_state'], strict=True)
+        self._load_state_dict(checkpoint['model_state'], strict=strict)
 
         if optimizer is not None:
             if 'optimizer_state' in checkpoint and checkpoint['optimizer_state'] is not None:
                 logger.info('==> Loading optimizer parameters from checkpoint %s to %s'
                             % (filename, 'CPU' if to_cpu else 'GPU'))
-                optimizer.load_state_dict(checkpoint['optimizer_state'])
+                if not strict:
+                    try:
+                        # if predictor training with resume, keep the state
+                        optimizer.load_state_dict(checkpoint['optimizer_state'])
+                    except:
+                        logger.info('===> loading optimizer state failed due to updated param group')
+                        import ipdb; ipdb.set_trace()
+                else:
+                    optimizer.load_state_dict(checkpoint['optimizer_state'])
+
             else:
                 assert filename[-4] == '.', filename
                 src_file, ext = filename[:-4], filename[-3:]

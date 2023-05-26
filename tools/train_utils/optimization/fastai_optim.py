@@ -93,6 +93,20 @@ def listify(p=None, q=None):
 
 def trainable_params(m: nn.Module):
     "Return list of trainable params in `m`."
+    # res = []
+    # for n,p in m.named_parameters():
+        # if for_predictor:
+            # if 'predictor' in n:
+                # assert p.requires_grad
+                # res.append(p)
+            # else:
+                # pass
+        # else:
+            # if 'predictor' not in n:
+                # assert p.requires_grad
+                # res.append(p)
+            # else:
+                # pass
     res = filter(lambda p: p.requires_grad, m.parameters())
     return res
 
