@@ -63,11 +63,12 @@ def get_flops_and_memory_opt(cfg, model_,logger,model_type='centerpoint_kitti'):
                 post_act_size += v_[0].features.nelement()
                 print(v_[0].indice_dict.keys())
                 # get the relative sparse rate with actual data
-                for indice_k in indice_dict_keys:
-                    mapping = v_[0].indice_dict[indice_k][2][0,:,:]
-                    mapping_sparse_rate = (mapping!=-1).sum() / mapping.numel()
-                    print('At {}: sparse_rate {:.3f}'.format(indice_k,mapping_sparse_rate))
-                    sparse_rates.append(mapping_sparse_rate)
+                # for indice_k in indice_dict_keys:
+                    # mapping = v_[0].indice_dict[indice_k][2][0,:,:]
+                    # mapping_sparse_rate = (mapping!=-1).sum() / mapping.numel()
+                    # print('At {}: sparse_rate {:.3f}'.format(indice_k,mapping_sparse_rate))
+                    # import ipdb; ipdb.set_trace()
+                    # sparse_rates.append(mapping_sparse_rate)
             else:
                 if 'out' not in k_ and 'boxes' not in k_:
                     try:
@@ -78,61 +79,61 @@ def get_flops_and_memory_opt(cfg, model_,logger,model_type='centerpoint_kitti'):
                 if 'pre' in k_:
                     print(k_, v_[0].features.shape)
                     # print(idx_)
-                    pre_flops += 6*channels[idx_]*channels[idx_+1]*sparse_rates[idx_]*27*v_[0].features.shape[0]  # 3 layers, FLOPs=2*C_in*C_out*N
+                    # pre_flops += 6*channels[idx_]*channels[idx_+1]*sparse_rates[idx_]*27*v_[0].features.shape[0]  # 3 layers, FLOPs=2*C_in*C_out*N
                     pre_act_size += v_[0].features.nelement()
                 elif 'post' in k_:
                     print(k_, v_[0].features.shape)
                     # print(idx_)
-                    post_flops += 6*channels[idx_]*channels[idx_+1]*sparse_rates[idx_]*27*v_[0].features.shape[0]
+                    # post_flops += 6*channels[idx_]*channels[idx_+1]*sparse_rates[idx_]*27*v_[0].features.shape[0]
                     post_act_size += v_[0].features.nelement()
 
-    backbone_2d_func = model_.backbone_2d
-    for i_block, block_ in enumerate(block_ids):
-        for i_module in block_:
-            save_dict_k = 'block{}_{}'.format(i_block,i_module)
-            act = model_.save_dict[save_dict_k]
-            op = backbone_2d_func.blocks[i_block][i_module]
-            assert isinstance(op, nn.Conv2d)
-            in_channels = op.in_channels
-            out_channels = op.out_channels
-            kernel_k = op.kernel_size[0]*op.kernel_size[1]
-            n_nonezero = (act[0]!=0).float().sum()
-            n_dense = act[0].numel()
-            print('{}: {:.3f}'.format(save_dict_k, (n_nonezero/n_dense).item()))
+    # backbone_2d_func = model_.backbone_2d
+    # for i_block, block_ in enumerate(block_ids):
+        # for i_module in block_:
+            # save_dict_k = 'block{}_{}'.format(i_block,i_module)
+            # act = model_.save_dict[save_dict_k]
+            # op = backbone_2d_func.blocks[i_block][i_module]
+            # assert isinstance(op, nn.Conv2d)
+            # in_channels = op.in_channels
+            # out_channels = op.out_channels
+            # kernel_k = op.kernel_size[0]*op.kernel_size[1]
+            # n_nonezero = (act[0]!=0).float().sum()
+            # n_dense = act[0].numel()
+            # print('{}: {:.3f}'.format(save_dict_k, (n_nonezero/n_dense).item()))
 
-            pre_act_size_2d += n_dense*out_channels 
-            post_act_size_2d += n_nonezero*out_channels
-            pre_flops_2d += 2*in_channels*out_channels*kernel_k*n_dense
-            post_flops_2d += 2*in_channels*out_channels*kernel_k*n_nonezero
+            # pre_act_size_2d += n_dense*out_channels 
+            # post_act_size_2d += n_nonezero*out_channels
+            # pre_flops_2d += 2*in_channels*out_channels*kernel_k*n_dense
+            # post_flops_2d += 2*in_channels*out_channels*kernel_k*n_nonezero
 
-    for i_block, block_ in enumerate(deblock_ids):
-        for i_module in block_:
-            save_dict_k = 'deblock{}_{}'.format(i_block,i_module+1)
-            act = model_.save_dict[save_dict_k]
-            op = backbone_2d_func.deblocks[i_block][i_module]
-            assert isinstance(op, nn.ConvTranspose2d)
-            in_channels = op.in_channels
-            out_channels = op.out_channels
-            kernel_k = op.kernel_size[0]*op.kernel_size[1]
-            n_nonezero = (act[0]!=0).float().sum()
-            n_dense = act[0].numel()
-            print('{}: {:.3f}'.format(save_dict_k, (n_nonezero/n_dense).item()))
+    # for i_block, block_ in enumerate(deblock_ids):
+        # for i_module in block_:
+            # save_dict_k = 'deblock{}_{}'.format(i_block,i_module+1)
+            # act = model_.save_dict[save_dict_k]
+            # op = backbone_2d_func.deblocks[i_block][i_module]
+            # assert isinstance(op, nn.ConvTranspose2d)
+            # in_channels = op.in_channels
+            # out_channels = op.out_channels
+            # kernel_k = op.kernel_size[0]*op.kernel_size[1]
+            # n_nonezero = (act[0]!=0).float().sum()
+            # n_dense = act[0].numel()
+            # print('{}: {:.3f}'.format(save_dict_k, (n_nonezero/n_dense).item()))
 
-            pre_act_size_2d += n_dense*out_channels
-            post_act_size_2d += n_nonezero*out_channels
-            pre_flops_2d += 2*in_channels*out_channels*kernel_k*n_dense
-            post_flops_2d += 2*in_channels*out_channels*kernel_k*n_nonezero
+            # pre_act_size_2d += n_dense*out_channels
+            # post_act_size_2d += n_nonezero*out_channels
+            # pre_flops_2d += 2*in_channels*out_channels*kernel_k*n_dense
+            # post_flops_2d += 2*in_channels*out_channels*kernel_k*n_nonezero
 
     logger.info('========= [3D Part] ===========')
     logger.info('==> pre_act_size: {}, post_act_size: {}, Memory Opt: {:.3f}'.format(pre_act_size,post_act_size,post_act_size/pre_act_size))
-    logger.info('==> pre_flops: {}, post_flops: {}, FLOPs Opt: {:.3f}'.format(pre_flops/1E9, post_flops/1E9, post_flops/pre_flops))
-    logger.info('========= [2D Part] ===========')
-    logger.info('==> pre_act_size: {}, post_act_size: {}, Memory Opt: {:.3f}'.format(pre_act_size_2d,post_act_size_2d,post_act_size_2d/pre_act_size_2d))
-    logger.info('==> pre_flops: {}, post_flops: {}, FLOPs Opt: {:.3f}'.format(pre_flops_2d/1E9, post_flops_2d/1E9, post_flops_2d/pre_flops_2d))
+    # logger.info('==> pre_flops: {}, post_flops: {}, FLOPs Opt: {:.3f}'.format(pre_flops/1E9, post_flops/1E9, post_flops/pre_flops))
+    # logger.info('========= [2D Part] ===========')
+    # logger.info('==> pre_act_size: {}, post_act_size: {}, Memory Opt: {:.3f}'.format(pre_act_size_2d,post_act_size_2d,post_act_size_2d/pre_act_size_2d))
+    # logger.info('==> pre_flops: {}, post_flops: {}, FLOPs Opt: {:.3f}'.format(pre_flops_2d/1E9, post_flops_2d/1E9, post_flops_2d/pre_flops_2d))
     logger.info('========= [Overall Opt] ===========')
-    mem_opt = (pre_act_size_2d+pre_act_size)/(post_act_size_2d+post_act_size)
-    flops_opt = (pre_flops_2d+pre_flops)/(post_flops_2d+post_flops)
-    logger.info('==> Mem_opt: {:.3f}, FLOPs_opt: {:.3f}'.format(mem_opt, flops_opt))
+    # mem_opt = (pre_act_size_2d+pre_act_size)/(post_act_size_2d+post_act_size)
+    # flops_opt = (pre_flops_2d+pre_flops)/(post_flops_2d+post_flops)
+    # logger.info('==> Mem_opt: {:.3f}, FLOPs_opt: {:.3f}'.format(mem_opt, flops_opt))
 
 
 def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=False, result_dir=None):
@@ -176,7 +177,7 @@ def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=Fal
             model_.grid_size = grid_size
             # DIRTY: module.cfg = cfg
             model_.backbone_3d.cfg = cfg
-            model_.backbone_2d.cfg = cfg
+            # model_.backbone_2d.cfg = cfg
             logger.info("====> grid size for predictor:{}".format(grid_size//model_.predictor_stride))
 
 
@@ -195,7 +196,7 @@ def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=Fal
             model_ = model.module if hasattr(model,'module') else model
             model_.backbone_3d.probe_feature=True
             # INFO: voxelnext model have no backbone_2d
-            if hasattr(model.backbone_2d,'probe_feature'):
+            if model_.backbone_2d is not None and hasattr(model_.backbone_2d,'probe_feature'):
                 model_.backbone_2d.probe_feature=True
             if hasattr(model_,'if_save_runtime'): # skip for models without the 'if_save_runtime' flag
                 model_.if_save_runtime = if_save_runtime

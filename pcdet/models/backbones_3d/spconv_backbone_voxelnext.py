@@ -359,5 +359,9 @@ class VoxelResBackBone8xVoxelNeXt(nn.Module):
                 'x_conv4': 8,
             }
         })
-        
-        return batch_dict
+
+        if enable_predictor:
+            batch_dict.update(inbox_rate_d)
+            return batch_dict, pred_heatmap
+        else:
+            return batch_dict

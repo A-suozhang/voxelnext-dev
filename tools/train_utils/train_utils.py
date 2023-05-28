@@ -39,7 +39,7 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         model_.grid_size = grid_size
         # DIRTY: module.cfg = cfg
         model_.backbone_3d.cfg = cfg
-        model_.backbone_2d.cfg = cfg
+        # model_.backbone_2d.cfg = cfg
         logger.info("====> grid size for predictor:{}".format(grid_size//model_.predictor_stride))
 
     if rank == 0:
@@ -252,7 +252,7 @@ def train_predictor_one_epoch(model, optimizer, train_loader, model_func, lr_sch
     model_.grid_size = grid_size
     # DIRTY: module.cfg = cfg
     model_.backbone_3d.cfg = cfg
-    model_.backbone_2d.cfg = cfg
+    # model_.backbone_2d.cfg = cfg
     logger.info("====> grid size for predictor:{}".format(grid_size//model_.predictor_stride))
 
     inbox_rate_d = {}
@@ -499,7 +499,7 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
                 if cfg.OPTIMIZATION.PREDICTOR.get('GRADUAL_INCREASE_K',False):
                     train_progress = (predictor_cur_epoch+1)/predictor_epochs
                     model_.backbone_3d.k_percent = [100-(100-x)*train_progress for x in cfg.MODEL.PREDICTOR.K_PERCENT_3D]
-                    model_.backbone_2d.k_percent = [100-(100-x)*train_progress for x in cfg.MODEL.PREDICTOR.K_PERCENT_2D]
+                    # model_.backbone_2d.k_percent = [100-(100-x)*train_progress for x in cfg.MODEL.PREDICTOR.K_PERCENT_2D]
                 else:
                     pass
 
@@ -749,8 +749,8 @@ def intermediate_eval(cfg, args, model, dataloader, epoch_id, logger, dist_test=
     model_.grid_size = grid_size
     # DIRTY: module.cfg = cfg
     model_.backbone_3d.cfg = cfg
-    if hasttr(mode_.backbone_2d,'cfg'):
-        model_.backbone_2d.cfg = cfg
+    # if hasattr(model_.backbone_2d,'cfg'):
+        # model_.backbone_2d.cfg = cfg
     if hasattr(model_,'predictor_stride'):
         logger.info("====> grid size for predictor:{}".format(grid_size//model_.predictor_stride))
 

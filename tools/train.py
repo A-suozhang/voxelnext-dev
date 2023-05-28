@@ -206,7 +206,7 @@ def main():
             args.epochs = last_epoch + args.epochs  # continue from exitisng ckpt
 
             # CFG: eval the loaded ckpt first
-            EVAL_CKPT_BEFORE_LOADING = True
+            EVAL_CKPT_BEFORE_LOADING = False
             if EVAL_CKPT_BEFORE_LOADING:
                 logger.info('eval the loaded ckpt from: {}'.format(args.ckpt))
                 with torch.no_grad():

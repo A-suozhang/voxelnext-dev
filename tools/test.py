@@ -40,6 +40,9 @@ def parse_config():
     parser.add_argument('--ckpt_dir', type=str, default=None, help='specify a ckpt directory to be evaluated if needed')
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
     parser.add_argument('--infer_time', action='store_true', default=False, help='calculate inference latency')
+    parser.add_argument('--test_split', action='store_true', default=False, help='whether to use test split')
+    parser.add_argument('--export', action='store_true', default=False, help='export activation and skip evaluation')
+    parser.add_argument('--hard_drop', action='store_true', default=False, help='whether apply drop')
 
     args = parser.parse_args()
 
@@ -60,7 +63,6 @@ def eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id
     model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=dist_test, 
                                 pre_trained_path=args.pretrained_model)
     model.cuda()
-    
     # start evaluation
     eval_utils.eval_one_epoch(
         cfg, args, model, test_loader, epoch_id, logger, dist_test=dist_test,
@@ -137,6 +139,10 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
 
 def main():
     args, cfg = parse_config()
+
+    if args.test_split:
+        cfg.DATA_CONFIG.DATA_SPLIT['test'] = cfg.DATA_CONFIG.DATA_SPLIT['test'].replace('val','test')
+        cfg.DATA_CONFIG.INFO_PATH['test'] = [str_.replace('val','test') for str_ in cfg.DATA_CONFIG.INFO_PATH['test']]
 
     if args.infer_time:
         os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
